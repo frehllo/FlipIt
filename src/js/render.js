@@ -102,6 +102,14 @@ function renderPlayerRankItem(container, p, idx, cur) {
   const pending = p.getState("pendingActions") || [];
   const shown = [...tavolo, ...pending];
 
+  if (p.getState("hasSecondChance")) {
+    
+    const giaInPending = pending.some(c => c.value === "2ndCHANCE");
+    if (!giaInPending) {
+      shown.push({ type: "special", value: "2ndCHANCE" });
+    }
+  }
+
   const dotClass =
     sKey === "IN_GIOCO"
       ? "dot-green"
