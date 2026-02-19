@@ -2,10 +2,9 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
-  base: "/pixel7/",
+  base: "/flipit/",
   plugins: [
     react(),
-    // 🔄 Lit plugin (opzionale, tree-shaking auto)
   ],
   server: {
     force: true 
