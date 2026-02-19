@@ -2,7 +2,6 @@ import * as Playroom from "playroomkit";
 import { setLocale, getLocale, applyI18n } from "./i18n.js";
 import { installFxRpc } from "./fx.js";
 import { installToastRpc } from "./toast.js";
-import { LOG } from "./log.js";
 import { initChatUI } from "./chat.js";
 import { initInfoModal, installTargetModalRpcs } from "./modals.js";
 import { installEndgameRpcs } from "./endgame.js";
@@ -15,7 +14,7 @@ import {
 import { initInputs } from "./input.js";
 import { startLoop } from "./loop.js";
 import { el } from "./dom.js";
-import { renderHud, renderGlobalRank, renderMyTable } from "./render.js"; // ✅ Già corretto
+import { renderHud, renderGlobalRank, renderMyTable } from "./render.js";
 
 if (import.meta.hot) import.meta.hot.decline();
 
@@ -35,7 +34,7 @@ async function boot() {
   applyI18n();
 
   // language toggle + label (shows the *next* language)
-  const updateLangButton = async () => { // ✅ ASYNC
+  const updateLangButton = async () => {
     const btn = el("btn-lang");
     if (!btn) return;
     const cur = getLocale();
@@ -43,21 +42,20 @@ async function boot() {
     btn.setAttribute("title", cur === "it" ? "Switch to English" : "Passa a Italiano");
   };
 
-  await updateLangButton(); // ✅ AWAIT
+  await updateLangButton();
 
   const btnLang = el("btn-lang");
   if (btnLang) {
-    btnLang.onclick = async () => { // ✅ ASYNC
+    btnLang.onclick = async () => {
       const cur = getLocale();
       setLocale(cur === "it" ? "en" : "it");
 
       applyI18n();
-      await updateLangButton(); // ✅ AWAIT
+      await updateLangButton();
 
-      // ✅ RENDER ASYNC - Ordine importante!
-      await renderGlobalRank();     // 1° Sidebar
-      await renderMyTable();        // 2° My table  
-      renderHud({                   // 3° Sync (testi)
+      await renderGlobalRank();
+      await renderMyTable();
+      renderHud({
         actionLocked: hostActionLocked(),
         transitionLocked: hostRoundTransitionLocked(),
       });
