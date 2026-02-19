@@ -315,13 +315,10 @@ body {
 /* ✅ SCROLL ORIZZONTALE FLUIDO - RANK & CARDS */
 #global-rank,
 #card-display {
-  height: 420px;
-  max-height: 420px;
   overflow-x: auto;
   overflow-y: hidden;
   scroll-behavior: smooth;
 
-  /* CONTENITORE FLEX ORIZZONTALE */
   display: flex;
   flex-direction: row;
   flex-wrap: nowrap;
@@ -329,15 +326,21 @@ body {
   width: 100%;
   padding: 10px 0;
 
-  /* SCROLLBAR CUSTOM */
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
 
-  /* PERFORMANCE */
   contain: layout style inline-size;
   will-change: scroll-position;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
+}
+
+#global-rank {
+  height: 140px;
+}
+
+#card-display {
+  height: 250px;
 }
 
 /* SCROLLBAR WEBKIT (Chrome/Safari/Edge) */
@@ -593,6 +596,10 @@ body {
   #chat-modal #chat-close-mobile,
   #chat-modal #chat-send-mobile {
     margin-top: 10px;
+  }
+
+  .top-right {
+    display: none; /* Nasconde la top-right su schermi piccoli */
   }
 }
 
@@ -1102,11 +1109,17 @@ body {
 
   #global-rank,
   #card-display {
-    height: 360px;
-    max-height: 360px;
     padding: 12px 0;
     gap: 8px;
     scroll-snap-type: x mandatory;
+  }
+
+  #global-rank {
+    height: 140px;
+  }
+
+  #card-display {
+    height: 200px;
   }
 
   .bottombar {
