@@ -284,6 +284,10 @@ body{
   gap:10px;
 }
 
+.layout>section {
+  overflow-x: auto;
+}
+
 .sidebar{
   min-height:0;
   display:flex;
@@ -298,9 +302,17 @@ body{
   gap:10px;
 }
 
-.players, .log, .table{
+.players, .table{
   padding:10px;
   min-height:0;
+}
+
+/* ✅ VIRTUALIZER - CONTAINER OBBLIGATORI */
+#global-rank, #card-display {
+  height: 420px; /* ✅ ALTEZZA FISSA OBBLIGATORIA per virtualizer */
+  overflow: auto;
+  contain: layout style inline-size; /* ✅ OBBLIGATORIO per performance */
+  scroll-behavior: smooth;
 }
 
 /* chat */
@@ -322,7 +334,7 @@ body{
   flex:1;
   min-width:0;
   font-family: var(--font-ui);
-  font-size: calc(12px * var(--fs));
+  font-size: calc(10px * var(--fs));
   padding: 10px 10px;
   border: var(--px) solid rgba(0,224,255,0.20);
   border-radius: 12px;
@@ -340,6 +352,28 @@ body{
   line-height:1.3;
 }
 
+.chat-system>.chat-name  {
+  color: var(--neonGold);
+}
+
+.chat-system>.chat-msg  {
+  opacity: 0.4;
+  color: var(--neonGold);
+}
+
+.chat-name {
+  font-family: var(--font-title);
+  font-size: calc(10px * var(--fs));
+  letter-spacing: 0.4px;
+  color: var(--neonCyan);
+}
+
+.chat-msg {
+  font-size: calc(10px * var(--fs));
+  line-height:1.3;
+  opacity:0.96;
+}
+
 /* legend */
 .legend{
   padding:10px;
@@ -349,26 +383,19 @@ body{
 .legend-row{ display:flex; gap:8px; margin:6px 0; }
 .ic{ width:20px; display:inline-flex; justify-content:center; }
 
-/* rank & log: scroll orizzontale */
-.rank, .round-log{
-  display:flex;
-  gap:10px;
-  overflow-x:auto;
-  overflow-y:hidden;
-  padding-bottom:4px;
-  -webkit-overflow-scrolling: touch;
-}
-
-/* ✅ CHANGED: removed border + shadow from rank item */
-.rank-item{
-  min-width: 190px;
+/* ✅ VIRTUALIZER - RANK ITEMS */
+.rank-item {
+  height: 88px; /* ✅ ALTEZZA FISSA OBBLIGATORIA */
+  flex-shrink: 0; /* ✅ Previene schiacciamento */
+  display: flex;
+  flex-direction: column;
   background: rgba(255,255,255,0.035);
   border: none;
   border-radius: 14px;
-  box-shadow: none;
   padding:10px;
   overflow:hidden;
   position: relative;
+  contain: layout style; /* ✅ OBBLIGATORIO per riciclo */
 }
 
 .rank-item::after{
@@ -381,10 +408,10 @@ body{
   opacity: 0.60;
 }
 
-/* keep a subtle focus without a “frame” */
+/* keep a subtle focus without a "frame" */
 .rank-active{
   border: none;
-  box-shadow: 0 0 0 5px rgba(0,224,255,0.14);
+  box-shadow: 2px 2px 1px 1px var(--neonGold);
 }
 
 .rank-top{ display:flex; justify-content:space-between; align-items:center; gap:10px; }
@@ -421,7 +448,13 @@ body{
 .dot-blue{ background: var(--neonCyan); box-shadow: 0 0 12px rgba(0,224,255,0.14); }
 .dot-red{ background: var(--neonRed); box-shadow: 0 0 12px rgba(255,70,90,0.14); }
 
-.mini-cards{ display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; min-height: 30px; }
+.mini-cards{ 
+  display:flex; 
+  flex-wrap:wrap; 
+  gap:6px; 
+  margin-top:10px; 
+  min-height: 30px; 
+}
 
 .mini{
   width:22px; height:28px;
@@ -435,21 +468,22 @@ body{
   box-shadow: inset 0 0 0 1px rgba(0,0,0,0.55);
 }
 
-/* CARDS */
-.cards{
-  display:flex;
-  gap:12px;
-  overflow-x:auto;
-  overflow-y:hidden;
-  -webkit-overflow-scrolling: touch;
-  padding-bottom:4px;
-  min-height: calc(var(--cardH) + 8px);
+.mini.dup-hit{
+  border-color: rgba(255,70,90,0.80) !important;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.55), var(--shadowSoft), 0 0 18px rgba(255,70,90,0.16);
 }
 
-.card{
+.mini.special {
+  border-color: var(--neonPink);
+  font-size: calc(8px * var(--fs));
+}
+
+/* ✅ VIRTUALIZER - CARDS */
+.card {
   flex: 0 0 var(--cardW);
   width: var(--cardW);
-  height: var(--cardH);
+  height: var(--cardH); /* ✅ ALTEZZA FISSA OBBLIGATORIA */
+  flex-shrink: 0; /* ✅ Previene schiacciamento */
   background:
     radial-gradient(120px 80px at 20% 15%, rgba(255,255,255,0.10), transparent 60%),
     rgba(255,255,255,0.06);
@@ -467,6 +501,7 @@ body{
   transform: translateZ(0);
   transform-origin: 50% 0%;
   will-change: transform, opacity, filter;
+  contain: layout style; /* ✅ OBBLIGATORIO per riciclo */
 }
 
 .card::after{
@@ -534,6 +569,7 @@ body{
   border-color: rgba(255,70,90,0.80) !important;
   box-shadow: 0 0 0 1px rgba(0,0,0,0.55), var(--shadowSoft), 0 0 18px rgba(255,70,90,0.16);
 }
+
 .card.shake{ animation: shakeDup 0.55s linear 0s 4; }
 .card.deal.shake{
   animation-name: cardFoldIn, shakeDup;
@@ -543,31 +579,16 @@ body{
   animation-fill-mode: both, none;
 }
 
-/* mini dup pulse */
-@keyframes dupPulse{
-  0%{ filter:brightness(1.0); transform: translateY(0) scale(1.00); }
-  25%{ filter:brightness(1.25); transform: translateY(-1px) scale(1.03); }
-  50%{ filter:brightness(1.05); transform: translateY(0) scale(1.00); }
-  75%{ filter:brightness(1.28); transform: translateY(-1px) scale(1.03); }
-  100%{ filter:brightness(1.0); transform: translateY(0) scale(1.00); }
+.card.pending-action{
+  outline: 2px solid rgba(255,255,255,.85);
+  box-shadow: 0 0 0 2px rgba(0,0,0,.35), 0 0 18px rgba(255,255,255,.25);
+  animation: pendingPulse 900ms ease-in-out infinite;
 }
-.card.dup-hit.flash-strong{ animation: dupPulse 380ms ease-in-out infinite; }
-.mini.dup-hit.flash-strong{ animation: dupPulse 520ms ease-in-out infinite; }
 
-.chip{
-  flex: 0 0 auto;
-  background: rgba(255,255,255,0.06);
-  border: var(--px) solid rgba(255,255,255,0.10);
-  border-radius: 999px;
-  padding: 8px 10px;
-  font-size: calc(11px * var(--fs));
-  line-height:1.2;
-  box-shadow: var(--shadowSoft);
+@keyframes pendingPulse{
+  0%,100%{ transform: translateY(0); filter: brightness(1); }
+  50%{ transform: translateY(-2px); filter: brightness(1.2); }
 }
-.chip.info{ background: rgba(0,224,255,0.12); border-color: rgba(0,224,255,0.18); box-shadow: var(--shadowSoft), var(--glowCyan); }
-.chip.success{ background: rgba(0,255,160,0.12); border-color: rgba(0,255,160,0.18); box-shadow: var(--shadowSoft), 0 0 18px rgba(0,255,160,0.10); }
-.chip.danger{ background: rgba(255,70,90,0.12); border-color: rgba(255,70,90,0.18); box-shadow: var(--shadowSoft), 0 0 18px rgba(255,70,90,0.10); }
-.chip.neutral{ background: rgba(255,255,255,0.06); }
 
 /* buttons */
 .bottombar{
@@ -679,7 +700,6 @@ body{
   justify-content:center;
 }
 
-/* ✅ CHANGED: endgame modal buttons centered + spaced */
 #endgame-host-actions{
   display:flex;
   justify-content:center;
@@ -810,6 +830,11 @@ body{
   .layout{ grid-template-columns: 1fr; gap:8px; }
   .sidebar{ display:none; }
   :root{ --cardW: 78px; --cardH: 110px; --cardR: 16px; }
+
+  /* ✅ Virtualizer mobile */
+  #global-rank, #card-display {
+    height: 360px; /* Più compatto su mobile */
+  }
 
   .bottombar{
     grid-template-columns: 1fr;

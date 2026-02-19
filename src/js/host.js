@@ -1,5 +1,5 @@
 import * as Playroom from "playroomkit";
-import { CFG, PLUS2 } from "./cfg.js";
+import { CFG, PLUS1 } from "./cfg.js";
 import { t, actionLabel, nf } from "./i18n.js";
 import {
   hostNow,
@@ -7,15 +7,22 @@ import {
   ensureDefaults,
   isEligible,
   eligibleTurnIds,
-  currentTurnPlayer,
   getFlip3Ctx,
-  getPendingTarget
+  getPendingTarget,
 } from "./state.js";
 import { generateDeck, pointsFromCards } from "./deck.js";
 import { toast } from "./toast.js";
 import { LOG } from "./log.js";
 import { fxCall } from "./fx.js";
 import { pick } from "./util.js";
+
+const PHASE = Object.freeze({
+  TURN: "TURN",
+  CHOOSING_TARGET: "CHOOSING_TARGET",
+  FLIP3_RUNNING: "FLIP3_RUNNING",
+  ROUND_TRANSITION: "ROUND_TRANSITION",
+  GAME_OVER: "GAME_OVER",
+});
 
 export function installHostRpcs() {
   Playroom.RPC.register("rpcHostPlayerDraw", hostPlayerDraw);
@@ -48,13 +55,31 @@ export function hostInit() {
   if (Playroom.getState("flip3Pause") == null) Playroom.setState("flip3Pause", null);
 
   if (Playroom.getState("reqCounter") == null) Playroom.setState("reqCounter", 1);
+
+  if (Playroom.getState("gamePhase") == null) Playroom.setState("gamePhase", PHASE.TURN);
+
+  hostSyncPhase();
 }
 
-/**
- * ✅ FIX:
- * - Deve essere idempotente (non spammare setState)
- * - Deve controllare turnPid “attuale” direttamente, non solo currentTurnPlayer()
- */
+function hostSyncPhase() {
+  if (!Playroom.isHost()) return;
+
+  const now = hostNow();
+  const pt = getPendingTarget();
+  const f3 = getFlip3Ctx();
+  const gameover = !!Playroom.getState("partitaFinita");
+  const trans = now < (Playroom.getState("roundTransitionUntil") || 0);
+
+  let next = PHASE.TURN;
+  if (gameover) next = PHASE.GAME_OVER;
+  else if (pt) next = PHASE.CHOOSING_TARGET;
+  else if (f3) next = PHASE.FLIP3_RUNNING;
+  else if (trans) next = PHASE.ROUND_TRANSITION;
+
+  const cur = Playroom.getState("gamePhase");
+  if (cur !== next) Playroom.setState("gamePhase", next);
+}
+
 export function hostEnsureValidTurn() {
   if (!Playroom.isHost()) return;
 
@@ -62,11 +87,8 @@ export function hostEnsureValidTurn() {
   if (elig.length === 0) return;
 
   const curId = Playroom.getState("turnPid");
-
-  // Se il turnPid è dentro elig, è valido -> non fare niente
   if (curId && elig.includes(curId)) return;
 
-  // Altrimenti fix a elig[0], ma solo se diverso (evita loop)
   const nextId = elig[0];
   if (curId === nextId) return;
 
@@ -89,6 +111,7 @@ export function hostLockAction(ms = CFG.SERVERACTIONCOOLDOWNMS) {
     "turnActionLockUntil",
     Math.max(Playroom.getState("turnActionLockUntil") || 0, until)
   );
+  hostSyncPhase();
 }
 
 export function hostLockRoundTransition(ms) {
@@ -98,6 +121,7 @@ export function hostLockRoundTransition(ms) {
     "roundTransitionUntil",
     Math.max(Playroom.getState("roundTransitionUntil") || 0, until)
   );
+  hostSyncPhase();
 }
 
 export function hostAdvanceTurn(reason) {
@@ -110,7 +134,6 @@ export function hostAdvanceTurn(reason) {
   const curId = Playroom.getState("turnPid");
   const startIdx = Math.max(0, elig.indexOf(curId));
 
-  // prova a trovare il prossimo id diverso che sia ancora eleggibile
   for (let step = 1; step <= elig.length; step++) {
     const nextId = elig[(startIdx + step) % elig.length];
     if (!nextId) continue;
@@ -133,6 +156,32 @@ function hostPushDiscard(cards) {
   Playroom.setState("discardPile", [...discard, ...(cards || [])]);
 }
 
+/**
+ * ✅ Speciali visibili finché non si risolvono:
+ * le mettiamo in pendingActions del pescatore, poi a risoluzione le spostiamo negli scarti.
+ */
+function hostAddPendingActionCard(playerId, card) {
+  const p = getPlayers().find((x) => x.id === playerId);
+  if (!p || !card) return;
+  ensureDefaults(p);
+  const arr = p.getState("pendingActions") || [];
+  p.setState("pendingActions", [...arr, card]);
+}
+
+function hostConsumePendingActionCard(playerId, tipo) {
+  const p = getPlayers().find((x) => x.id === playerId);
+  if (!p) return null;
+  ensureDefaults(p);
+
+  const arr = (p.getState("pendingActions") || []).slice();
+  const idx = arr.findIndex((c) => c && c.type === "special" && c.value === tipo);
+  if (idx < 0) return null;
+
+  const [card] = arr.splice(idx, 1);
+  p.setState("pendingActions", arr);
+  return card;
+}
+
 async function hostDrawOne() {
   let drawPile = Playroom.getState("drawPile") || [];
   let discardPile = Playroom.getState("discardPile") || [];
@@ -146,7 +195,7 @@ async function hostDrawOne() {
     }
     Playroom.setState("drawPile", drawPile);
     Playroom.setState("discardPile", discardPile);
-    toast(t("toast.reshuffle"), "neutral", 900 + PLUS2);
+    toast(t("toast.reshuffle"), "neutral", 900 + PLUS1);
     LOG.round(t("log.deckReshuffle"));
   }
 
@@ -182,6 +231,10 @@ function hostApplyTargeted(tipo, tid, byId, mode) {
   ensureDefaults(target);
   if (!isEligible(target)) return;
 
+  // ✅ Ora che l'effetto si risolve, scartiamo la carta speciale che era rimasta sul campo del pescatore
+  const used = hostConsumePendingActionCard(byId, tipo);
+  if (used) hostPushDiscard([used]);
+
   if (tipo === "FREEZE") {
     fxCall(tid, "FREEZE");
 
@@ -208,7 +261,7 @@ function hostApplyTargeted(tipo, tid, byId, mode) {
         pts: nf.formatNumber(pts),
       }),
       "info",
-      1500 + PLUS2
+      1500 + PLUS1
     );
 
     LOG.info(
@@ -237,7 +290,7 @@ function hostApplyTargeted(tipo, tid, byId, mode) {
         player: (target.getProfile().name || "PLAYER").split(" ")[0],
       }),
       "neutral",
-      1200 + PLUS2
+      1200 + PLUS1
     );
     LOG.round(t("log.secondDiscard"));
     return;
@@ -250,7 +303,7 @@ function hostApplyTargeted(tipo, tid, byId, mode) {
       player: (target.getProfile().name || "PLAYER").split(" ")[0],
     }),
     "neutral",
-    1300 + PLUS2
+    1300 + PLUS1
   );
   LOG.info(
     `${(by.getProfile().name || "PLAYER").split(" ")[0]} ${actionLabel("2ndCHANCE")} → ${(target.getProfile().name || "PLAYER").split(" ")[0]} ${
@@ -259,32 +312,68 @@ function hostApplyTargeted(tipo, tid, byId, mode) {
   );
 }
 
+function openTargetModalFor(tipo, sourceId, candidates, reqId) {
+  const ctx = {
+    reqId,
+    candidates: candidates.map((p) => ({
+      id: p.id,
+      name: (p.getProfile().name || "PLAYER").split(" ")[0],
+    })),
+  };
+
+  Playroom.RPC.call("rpcOpenTargetModal", { tipo, sourceId, ctx }, Playroom.RPC.Mode.ALL);
+  return ctx;
+}
+
+function hostPauseFlip3ForChoice(tipo, byId) {
+  const candidates = computeCandidates(tipo, byId);
+  const reqId = hostMakeReqId();
+  const ctx = getFlip3Ctx();
+
+  Playroom.setState("flip3Ctx", { ...ctx, paused: true, pauseReqId: reqId });
+  Playroom.setState("flip3Pause", { reqId, tipo, byId, createdAt: hostNow() });
+
+  openTargetModalFor(tipo, byId, candidates, reqId);
+
+  toast(t("toast.flip3PauseAssign", { tipo: actionLabel(tipo) }), "info", 1200 + PLUS1);
+  hostSyncPhase();
+
+  return { reqId };
+}
 
 function hostStartPending(tipo, byId) {
   if (!Playroom.isHost()) return;
   if (Playroom.getState("partitaFinita")) return;
   if (Playroom.getState("roundEndedByFlip7")) return;
   if (getPendingTarget()) return;
-  if (getFlip3Ctx()) return;
+
+  // se siamo in FLIP3, mettiamo in pausa e apriamo scelta
+  if (getFlip3Ctx()) {
+    hostPauseFlip3ForChoice(tipo, byId);
+    return;
+  }
 
   const candidates = computeCandidates(tipo, byId);
 
   if (tipo === "2ndCHANCE" && candidates.length === 0) {
-    toast(t("toast.secondNoTargets"), "neutral", 1300 + PLUS2);
+    toast(t("toast.secondNoTargets"), "neutral", 1300 + PLUS1);
     LOG.round(t("toast.secondNoTargets"));
+
+    // ✅ nessun bersaglio valido => l'azione si "scarta": scartiamo anche la carta speciale rimasta pending
+    const used = hostConsumePendingActionCard(byId, tipo);
+    if (used) hostPushDiscard([used]);
+
     return;
   }
 
   if (candidates.length === 1) {
-    hostApplyTargeted(tipo, candidates[0].id, byId, "AUTOONE");
+    hostApplyTargeted(tipo, candidates[0].id, byId, t("special:autoone"));
     hostAdvanceTurn("special:autoone");
     return;
   }
 
-  const ctx = {
-    reqId: hostMakeReqId(),
-    candidates: candidates.map((p) => ({ id: p.id, name: (p.getProfile().name || "PLAYER").split(" ")[0] })),
-  };
+  const reqId = hostMakeReqId();
+  const ctx = openTargetModalFor(tipo, byId, candidates, reqId);
 
   Playroom.setState("pendingTarget", {
     tipo,
@@ -294,12 +383,14 @@ function hostStartPending(tipo, byId) {
     ctx,
   });
 
-  Playroom.RPC.call("rpcOpenTargetModal", { tipo, sourceId: byId, ctx }, Playroom.RPC.Mode.ALL);
-  toast(t("toast.chooseTarget", { tipo: actionLabel(tipo) }), "info", 1000 + PLUS2);
+  hostSyncPhase();
+
+  toast(t("toast.chooseTarget", { tipo: actionLabel(tipo) }), "info", 1000 + PLUS1);
 }
 
 export function hostAutoResolvePendingIfNeeded() {
   if (!Playroom.isHost()) return;
+
   const f = getFlip3Ctx();
   if (f?.paused) return;
 
@@ -311,21 +402,32 @@ export function hostAutoResolvePendingIfNeeded() {
 
   const candidates = computeCandidates(pt.tipo, pt.by);
   if (candidates.length === 0) {
-    toast(t("toast.timeoutDiscard", { tipo: actionLabel(pt.tipo) }), "neutral", 1200 + PLUS2);
+    toast(t("toast.timeoutDiscard", { tipo: actionLabel(pt.tipo) }), "neutral", 1200 + PLUS1);
+
+    // ✅ timeout = scarto => scarta la carta speciale rimasta pending sul campo del pescatore
+    const used = hostConsumePendingActionCard(pt.by, pt.tipo);
+    if (used) hostPushDiscard([used]);
+
     Playroom.setState("pendingTarget", null);
+    hostSyncPhase();
     hostAdvanceTurn("timeout:discard");
     return;
   }
 
   const target = pick(candidates);
   toast(
-    t("toast.timeoutAuto", { tipo: actionLabel(pt.tipo), player: (target.getProfile().name || "PLAYER").split(" ")[0] }),
+    t("toast.timeoutAuto", {
+      tipo: actionLabel(pt.tipo),
+      player: (target.getProfile().name || "PLAYER").split(" ")[0],
+    }),
     "neutral",
-    1300 + PLUS2
+    1300 + PLUS1
   );
+
   hostApplyTargeted(pt.tipo, target.id, pt.by, "AUTOTIMEOUT");
 
   Playroom.setState("pendingTarget", null);
+  hostSyncPhase();
   hostAdvanceTurn("timeout:pick");
 }
 
@@ -337,19 +439,25 @@ function hostConfirmTargetChoice(d) {
   const tid = d?.tid;
   if (!byId || !tid) return;
 
-  // FLIP3 pause path (v220)
+  // FLIP3 pause path
   const f = getFlip3Ctx();
   if (f && f.paused && f.pauseReqId && reqId && f.pauseReqId === reqId) {
     if (byId !== f.targetId) return;
+
     const pause = Playroom.getState("flip3Pause") || null;
     if (!pause || pause.reqId !== reqId) return;
 
     const candidates = computeCandidates(pause.tipo, byId);
-    if (!candidates.some(p => p.id === tid)) return;
+    if (!candidates.some((p) => p.id === tid)) return;
+
+    Playroom.RPC.call("rpcForceCloseTargetModal", { sourceId: byId }, Playroom.RPC.Mode.ALL);
 
     hostApplyTargeted(pause.tipo, tid, byId, "FLIP3PAUSEMANUAL");
+
     Playroom.setState("flip3Pause", null);
     Playroom.setState("flip3Ctx", { ...f, paused: false, pauseReqId: null });
+    hostSyncPhase();
+
     LOG.round(t("log.flip3Resume"));
     return;
   }
@@ -361,11 +469,13 @@ function hostConfirmTargetChoice(d) {
   if (hostNow() > (pt.until || 0)) return;
 
   const candidates = computeCandidates(pt.tipo, pt.by);
-  if (!candidates.some(p => p.id === tid)) return;
+  if (!candidates.some((p) => p.id === tid)) return;
 
   Playroom.RPC.call("rpcForceCloseTargetModal", { sourceId: pt.by }, Playroom.RPC.Mode.ALL);
   hostApplyTargeted(pt.tipo, tid, pt.by, "MANUAL");
+
   Playroom.setState("pendingTarget", null);
+  hostSyncPhase();
   hostAdvanceTurn("special:manual");
 }
 
@@ -375,15 +485,24 @@ function hostStartFlip3(ownerId, targetId) {
   if (Playroom.getState("roundEndedByFlip7")) return;
   if (getFlip3Ctx()) return;
 
-  const target = getPlayers().find(p => p.id === targetId);
+  const target = getPlayers().find((p) => p.id === targetId);
   if (!target) return;
   ensureDefaults(target);
   if (!isEligible(target)) return;
 
   target.setState("flip3Lock", true);
-  Playroom.setState("flip3Ctx", { ownerId, targetId, remaining: 3, startedAt: hostNow(), paused: false, pauseReqId: null });
+  Playroom.setState("flip3Ctx", {
+    ownerId,
+    targetId,
+    remaining: 3,
+    startedAt: hostNow(),
+    paused: false,
+    pauseReqId: null,
+  });
 
-  toast(t("toast.flip3Start", { player: (target.getProfile().name || "PLAYER").split(" ")[0] }), "info", 1400 + PLUS2);
+  hostSyncPhase();
+
+  toast(t("toast.flip3Start", { player: (target.getProfile().name || "PLAYER").split(" ")[0] }), "info", 1400 + PLUS1);
   LOG.round(t("log.flip3Start", { player: (target.getProfile().name || "PLAYER").split(" ")[0] }));
 
   hostFlip3Schedule();
@@ -393,7 +512,7 @@ function hostEndFlip3(reason) {
   const ctx = getFlip3Ctx();
   if (!ctx) return;
 
-  const target = getPlayers().find(p => p.id === ctx.targetId);
+  const target = getPlayers().find((p) => p.id === ctx.targetId);
   if (target) {
     ensureDefaults(target);
     target.setState("flip3Lock", false);
@@ -403,6 +522,8 @@ function hostEndFlip3(reason) {
   Playroom.setState("flip3Stepping", false);
   Playroom.setState("flip3TimerOn", false);
   Playroom.setState("flip3Pause", null);
+
+  hostSyncPhase();
 
   LOG.round(t("log.flip3End", { reason: reason || "ok" }));
 
@@ -436,12 +557,22 @@ async function hostFlip3Step() {
       return;
     }
 
-    const target = getPlayers().find(p => p.id === ctx.targetId);
-    if (!target) { hostEndFlip3("targetleft"); return; }
+    const target = getPlayers().find((p) => p.id === ctx.targetId);
+    if (!target) {
+      hostEndFlip3("targetleft");
+      return;
+    }
     ensureDefaults(target);
-    if (!isEligible(target)) { hostEndFlip3("targetnoteligible"); return; }
+    if (!isEligible(target)) {
+      hostEndFlip3("targetnoteligible");
+      return;
+    }
 
-    const res = await Playroom.RPC.call("rpcHostPlayerDraw", { pid: ctx.targetId, fromFlip3: true }, Playroom.RPC.Mode.HOST);
+    const res = await Playroom.RPC.call(
+      "rpcHostPlayerDraw",
+      { pid: ctx.targetId, fromFlip3: true },
+      Playroom.RPC.Mode.HOST
+    );
     if (!res?.ok) return;
 
     const after = getFlip3Ctx();
@@ -475,8 +606,14 @@ function hostFlip3Schedule() {
       Playroom.setState("flip3TimerOn", false);
       return;
     }
-    if (ctx.paused) { setTimeout(tick, 160); return; }
-    if (hostRoundTransitionLocked() || Playroom.getState("flip3Stepping")) { setTimeout(tick, 120); return; }
+    if (ctx.paused) {
+      setTimeout(tick, 160);
+      return;
+    }
+    if (hostRoundTransitionLocked() || Playroom.getState("flip3Stepping")) {
+      setTimeout(tick, 120);
+      return;
+    }
 
     await hostFlip3Step();
     setTimeout(tick, CFG.FLIP3STEPMS);
@@ -489,8 +626,8 @@ export function hostFlip3Watchdog() {
   if (!Playroom.isHost()) return;
   const ctx = getFlip3Ctx();
   if (!ctx || !ctx.startedAt) return;
-  if (hostNow() - ctx.startedAt < (CFG.FLIP3WATCHDOGMS + PLUS2)) return;
-  toast(t("toast.watchdogClose"), "neutral", 1200 + PLUS2);
+  if (hostNow() - ctx.startedAt < (CFG.FLIP3WATCHDOGMS + PLUS1)) return;
+  toast(t("toast.watchdogClose"), "neutral", 1200 + PLUS1);
   hostEndFlip3("watchdog");
 }
 
@@ -509,7 +646,7 @@ async function hostPlayerDraw(d) {
 
   hostEnsureValidTurn();
 
-  const p = getPlayers().find(x => x.id === pid);
+  const p = getPlayers().find((x) => x.id === pid);
   if (!p) return { ok: false, reason: "noplayer" };
   ensureDefaults(p);
   if (!isEligible(p)) return { ok: false, reason: "noteligible" };
@@ -532,13 +669,17 @@ async function hostPlayerDraw(d) {
   let tavolo = p.getState("mioTavolo") || [];
 
   // DUPLICATE number
-  if (card.type === "number" && tavolo.some(c => c.type === "number" && c.value === card.value)) {
+  if (card.type === "number" && tavolo.some((c) => c.type === "number" && c.value === card.value)) {
     fxCall(p.id, "BUST");
 
     if (p.getState("hasSecondChance")) {
       p.setState("hasSecondChance", false);
       hostPushDiscard([{ type: "special", value: "2ndCHANCE" }, card]);
-      toast(t("toast.useSecond", { player: (p.getProfile().name || "PLAYER").split(" ")[0], val: card.value }), "neutral", 1200 + PLUS2);
+      toast(
+        t("toast.useSecond", { player: (p.getProfile().name || "PLAYER").split(" ")[0], val: card.value }),
+        "neutral",
+        1200 + PLUS1
+      );
       if (!fromFlip3) hostAdvanceTurn("draw:2ndsave");
       return { ok: true, card, outcome: "secondsaved" };
     }
@@ -548,7 +689,7 @@ async function hostPlayerDraw(d) {
     p.setState("dupValue", card.value);
     p.setState("dupFxUntil", hostNow() + Math.max(2000, CFG.BUSTHOLDMS));
 
-    toast(t("toast.bust", { player: (p.getProfile().name || "PLAYER").split(" ")[0], val: card.value }), "danger", 1700 + PLUS2);
+    toast(t("toast.bust", { player: (p.getProfile().name || "PLAYER").split(" ")[0], val: card.value }), "danger", 1700 + PLUS1);
     LOG.bust(p, card.value);
 
     p.setState("statoRound", "SBALLATO");
@@ -571,12 +712,13 @@ async function hostPlayerDraw(d) {
         hostAdvanceTurn("draw:bust");
       }, CFG.BUSTHOLDMS);
     }
+
     return { ok: true, card, outcome: "bust" };
   }
 
-  // SPECIAL draw: 2ndCHANCE
+  // SPECIAL draw: 2ndCHANCE (✅ resta pending finché risolto)
   if (card.type === "special" && card.value === "2ndCHANCE") {
-    hostPushDiscard([card]);
+    hostAddPendingActionCard(p.id, card);
 
     if (fromFlip3) {
       const elig = eligibleTurnIds();
@@ -584,25 +726,14 @@ async function hostPlayerDraw(d) {
         if (!p.getState("hasSecondChance")) {
           p.setState("hasSecondChance", true);
           fxCall(p.id, "SECOND");
-          toast(t("toast.secondGive", { player: (p.getProfile().name || "PLAYER").split(" ")[0] }), "neutral", 1200 + PLUS2);
+          toast(t("toast.secondGive", { player: (p.getProfile().name || "PLAYER").split(" ")[0] }), "neutral", 1200 + PLUS1);
         }
+        const used = hostConsumePendingActionCard(p.id, "2ndCHANCE");
+        if (used) hostPushDiscard([used]);
         return { ok: true, card, outcome: "secondautoself" };
       }
 
-      // PAUSE FLIP3: open target modal (by target player)
-      const candidates = computeCandidates("2ndCHANCE", p.id);
-      const reqId = hostMakeReqId();
-      const ctx = getFlip3Ctx();
-      Playroom.setState("flip3Ctx", { ...ctx, paused: true, pauseReqId: reqId });
-      Playroom.setState("flip3Pause", { reqId, tipo: "2ndCHANCE", byId: p.id, createdAt: hostNow() });
-
-      Playroom.RPC.call("rpcOpenTargetModal", {
-        tipo: "2ndCHANCE",
-        sourceId: p.id,
-        ctx: { reqId, candidates: candidates.map(x => ({ id: x.id, name: (x.getProfile().name || "PLAYER").split(" ")[0] })) }
-      }, Playroom.RPC.Mode.ALL);
-
-      toast(t("toast.flip3PauseAssign", { tipo: actionLabel("2ndCHANCE") }), "info", 1200 + PLUS2);
+      hostStartPending("2ndCHANCE", p.id);
       return { ok: true, card, outcome: "pausefor2nd" };
     }
 
@@ -610,28 +741,20 @@ async function hostPlayerDraw(d) {
     return { ok: true, card, outcome: "pendingtarget" };
   }
 
-  // SPECIAL draw: FREEZE / FLIP3
+  // SPECIAL draw: FREEZE / FLIP3 (✅ resta pending finché risolto)
   if (card.type === "special" && (card.value === "FREEZE" || card.value === "FLIP3")) {
+    hostAddPendingActionCard(p.id, card);
+
     if (fromFlip3) {
       const elig = eligibleTurnIds();
       if (elig.length === 1) {
         hostApplyTargeted(card.value, p.id, p.id, "AUTOSOLO");
+        const used = hostConsumePendingActionCard(p.id, card.value);
+        if (used) hostPushDiscard([used]);
         return { ok: true, card, outcome: "specialautoself" };
       }
 
-      const candidates = computeCandidates(card.value, p.id);
-      const reqId = hostMakeReqId();
-      const ctx = getFlip3Ctx();
-      Playroom.setState("flip3Ctx", { ...ctx, paused: true, pauseReqId: reqId });
-      Playroom.setState("flip3Pause", { reqId, tipo: card.value, byId: p.id, createdAt: hostNow() });
-
-      Playroom.RPC.call("rpcOpenTargetModal", {
-        tipo: card.value,
-        sourceId: p.id,
-        ctx: { reqId, candidates: candidates.map(x => ({ id: x.id, name: (x.getProfile().name || "PLAYER").split(" ")[0] })) }
-      }, Playroom.RPC.Mode.ALL);
-
-      toast(t("toast.flip3PauseAssign", { tipo: actionLabel(card.value) }), "info", 1200 + PLUS2);
+      hostStartPending(card.value, p.id);
       return { ok: true, card, outcome: "pauseforspecial" };
     }
 
@@ -639,12 +762,12 @@ async function hostPlayerDraw(d) {
     return { ok: true, card, outcome: "pendingtarget" };
   }
 
-  // add to table
+  // add to table (numeri/plus/mult)
   tavolo = [...tavolo, card];
   p.setState("mioTavolo", tavolo);
 
   // FLIP7
-  const nums = tavolo.filter(c => c.type === "number").map(c => c.value);
+  const nums = tavolo.filter((c) => c.type === "number").map((c) => c.value);
   if (new Set(nums).size >= 7) {
     const pts = pointsFromCards(tavolo) + CFG.FLIP7BONUS;
     p.setState("puntiTotali", (p.getState("puntiTotali") || 0) + pts);
@@ -656,6 +779,7 @@ async function hostPlayerDraw(d) {
     hostPushDiscard(p.getState("mioTavolo") || []);
     p.setState("mioTavolo", []);
 
+    // ✅ scarta anche eventuali speciali pending ancora sul campo
     hostPushDiscard(p.getState("pendingActions") || []);
     p.setState("pendingActions", []);
 
@@ -663,12 +787,17 @@ async function hostPlayerDraw(d) {
     p.setState("matchRoundDone", true);
 
     fxCall(p.id, "FLIP7");
-    toast(t("toast.flip7", { player: (p.getProfile().name || "PLAYER").split(" ")[0], pts: nf.formatNumber(pts) }), "success", 1800 + PLUS2);
+    toast(
+      t("toast.flip7", { player: (p.getProfile().name || "PLAYER").split(" ")[0], pts: nf.formatNumber(pts) }),
+      "success",
+      1800 + PLUS1
+    );
     LOG.round(`FLIP7 ${(p.getProfile().name || "PLAYER").split(" ")[0]} ${nf.formatNumber(pts)}`);
 
     if (fromFlip3) hostEndFlip3("flip7");
     else hostAdvanceTurn("draw:flip7");
 
+    hostSyncPhase();
     return { ok: true, card, outcome: "flip7" };
   }
 
@@ -691,7 +820,7 @@ function hostPlayerStop(d) {
   if (Playroom.getState("turnPid") !== pid) return;
   if (hostActionLocked() || hostRoundTransitionLocked()) return;
 
-  const p = getPlayers().find(x => x.id === pid);
+  const p = getPlayers().find((x) => x.id === pid);
   if (!p) return;
   ensureDefaults(p);
   if (!isEligible(p)) return;
@@ -709,6 +838,7 @@ function hostPlayerStop(d) {
   hostPushDiscard(tavolo);
   p.setState("mioTavolo", []);
 
+  // ✅ scarta anche le speciali pending rimaste sul campo
   hostPushDiscard(p.getState("pendingActions") || []);
   p.setState("pendingActions", []);
 
@@ -716,9 +846,14 @@ function hostPlayerStop(d) {
   p.setState("matchRoundDone", true);
 
   fxCall(p.id, "BANK", String(pts));
-  toast(t("toast.bank", { player: (p.getProfile().name || "PLAYER").split(" ")[0], pts: nf.formatNumber(pts) }), "success", 1200 + PLUS2);
+  toast(
+    t("toast.bank", { player: (p.getProfile().name || "PLAYER").split(" ")[0], pts: nf.formatNumber(pts) }),
+    "success",
+    1200 + PLUS1
+  );
   LOG.stop(p, nf.formatNumber(pts));
 
+  hostSyncPhase();
   hostAdvanceTurn("stop");
 }
 
@@ -732,30 +867,42 @@ export function hostMaybeEndRoundAndMatch() {
   ps.forEach(ensureDefaults);
 
   const endedByFlip7 = !!Playroom.getState("roundEndedByFlip7");
-  const allDone = ps.length > 0 && ps.every(p => !!p.getState("matchRoundDone"));
+  const allDone = ps.length > 0 && ps.every((p) => !!p.getState("matchRoundDone"));
   if (!endedByFlip7 && !allDone) return;
 
   // match end?
   const targetScore = Playroom.getState("matchTarget") || CFG.MATCHTARGET;
-  const top = ps.map(p => ({ id: p.id, score: p.getState("puntiTotali") || 0 })).sort((a, b) => b.score - a.score)[0];
+  const top = ps
+    .map((p) => ({ id: p.id, score: p.getState("puntiTotali") || 0 }))
+    .sort((a, b) => b.score - a.score)[0];
+
   if (top && top.score >= targetScore) {
     Playroom.setState("partitaFinita", true);
     Playroom.setState("winnerId", top.id);
-    const winner = ps.find(p => p.id === top.id);
-    toast(t("toast.matchEnd", { player: (winner?.getProfile().name || "PLAYER").split(" ")[0], score: nf.formatNumber(top.score) }), "success", 2200 + PLUS2);
+    hostSyncPhase();
+
+    const winner = ps.find((p) => p.id === top.id);
+    toast(
+      t("toast.matchEnd", {
+        player: (winner?.getProfile().name || "PLAYER").split(" ")[0],
+        score: nf.formatNumber(top.score),
+      }),
+      "success",
+      2200 + PLUS1
+    );
     Playroom.RPC.call("rpcOpenEndgame", {}, Playroom.RPC.Mode.ALL);
     return;
   }
 
-  // end round reset
+  // end round reset: scarta tutte le carte rimaste in tavolo e pendingActions
   const leftovers = [];
-  ps.forEach(p => {
+  ps.forEach((p) => {
     leftovers.push(...(p.getState("mioTavolo") || []));
     leftovers.push(...(p.getState("pendingActions") || []));
   });
   hostPushDiscard(leftovers);
 
-  ps.forEach(p => {
+  ps.forEach((p) => {
     p.setState("statoRound", "IN GIOCO");
     p.setState("matchRoundDone", false);
     p.setState("mioTavolo", []);
@@ -780,8 +927,9 @@ export function hostMaybeEndRoundAndMatch() {
 
   Playroom.setState("turnPid", ps[0]?.id || null);
   hostEnsureValidTurn();
+  hostSyncPhase();
 
-  toast(t("toast.newRound"), "neutral", 900 + PLUS2);
+  toast(t("toast.newRound"), "neutral", 900 + PLUS1);
   LOG.round(t("log.roundStart"));
 }
 
@@ -806,7 +954,7 @@ export function hostNewGame() {
   Playroom.RPC.call("rpcSyncLog", { log: [] }, Playroom.RPC.Mode.ALL);
   Playroom.setState("matchRoundIndex", 1);
 
-  ps.forEach(p => {
+  ps.forEach((p) => {
     p.setState("puntiTotali", 0);
     p.setState("statoRound", "IN GIOCO");
     p.setState("matchRoundDone", false);
@@ -823,6 +971,8 @@ export function hostNewGame() {
   hostEnsureValidTurn();
 
   Playroom.RPC.call("rpcForceCloseTargetModal", {}, Playroom.RPC.Mode.ALL);
-  toast(t("toast.newGame"), "success", 1200 + PLUS2);
+  Playroom.setState("gamePhase", PHASE.TURN);
+
+  toast(t("toast.newGame"), "success", 1200 + PLUS1);
   LOG.round(t("log.newGame"));
 }

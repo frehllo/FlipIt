@@ -42,7 +42,7 @@ Match: finisce quando qualcuno arriva a 200 (a fine round).`,
       second: "2ND!",
       bust: "DOPPIONE!",
       flip7: "FLIP7!!!",
-      bank: "BANCA!"
+      bank: "BANCA!",
     },
     hud: {
       chooseTargetTitle: "SCEGLI BERSAGLIO",
@@ -61,6 +61,12 @@ Match: finisce quando qualcuno arriva a 200 (a fine round).`,
       statusWaitChoice: "Attendi scelta bersaglio…",
       statusYourTurn: "Tocca a te: pesca o fermati.",
       statusTurnOf: ({ player }) => `Tocca a ${player}.`,
+      state: {
+        inPlay: "In gioco",
+        stay: "Fermo",
+        bust: "Sballato",
+        flip7win: "FLIP7!",
+      }
     },
     toast: {
       reshuffle: "Rimescolo gli scarti.",
@@ -98,8 +104,12 @@ Match: finisce quando qualcuno arriva a 200 (a fine round).`,
       secondDiscard: "2ND scartata (già presente).",
       secondNoTargets: "2ND: no targets.",
       targetChoose: ({ player, tipo }) => `${player} sceglie ${tipo}`,
+
+      // ✅ fallback “pass-through” (utile per LOG.info/LOG.round)
+      info: ({ text }) => String(text || ""),
+      round: ({ text }) => String(text || ""),
     },
-    action: { FREEZE: "FREEZE", FLIP3: "FLIP3", "2ndCHANCE": "2ND" }
+    action: { FREEZE: "FREEZE", FLIP3: "FLIP3", "2ndCHANCE": "2ND" },
   },
 
   en: {
@@ -143,7 +153,7 @@ Match ends when someone reaches 200 (checked at end of round).`,
       second: "2ND!",
       bust: "DUPLICATE!",
       flip7: "FLIP7!!!",
-      bank: "BANK!"
+      bank: "BANK!",
     },
     hud: {
       chooseTargetTitle: "CHOOSE TARGET",
@@ -162,6 +172,12 @@ Match ends when someone reaches 200 (checked at end of round).`,
       statusWaitChoice: "Waiting for target choice…",
       statusYourTurn: "Your turn: draw or bank.",
       statusTurnOf: ({ player }) => `${player}'s turn.`,
+      state: {
+        inPlay: "In play",
+        stay: "Stay",
+        bust: "Bust",
+        flip7win: "FLIP7!"
+      }
     },
     toast: {
       reshuffle: "Reshuffling discards.",
@@ -199,9 +215,13 @@ Match ends when someone reaches 200 (checked at end of round).`,
       secondDiscard: "2ND discarded (already present).",
       secondNoTargets: "2ND: no targets.",
       targetChoose: ({ player, tipo }) => `${player} chooses ${tipo}`,
+
+      // ✅ fallback “pass-through”
+      info: ({ text }) => String(text || ""),
+      round: ({ text }) => String(text || ""),
     },
-    action: { FREEZE: "FREEZE", FLIP3: "FLIP3", "2ndCHANCE": "2ND" }
-  }
+    action: { FREEZE: "FREEZE", FLIP3: "FLIP3", "2ndCHANCE": "2ND" },
+  },
 };
 
 let locale = "it";
@@ -220,29 +240,45 @@ export function getLocale() {
   }
 }
 
+/**
+ * t("a.b.c", params)
+ * fallback: locale -> en -> key
+ */
 export function t(path, params) {
-  const parts = String(path).split(".");
-  let node = dict[locale];
-  for (const p of parts) node = node?.[p];
+  const key = String(path || "");
+  const parts = key.split(".");
+
+  const resolve = (root) => {
+    let node = root;
+    for (const p of parts) node = node?.[p];
+    return node;
+  };
+
+  let node = resolve(dict[locale]);
+  if (node == null) node = resolve(dict.en);
+  if (node == null) return key;
+
   if (typeof node === "function") return node(params || {});
-  return (node ?? path);
+  return (node ?? key);
 }
 
 export const nf = {
-  formatNumber(n) { return new Intl.NumberFormat(locale).format(Number(n || 0)); }
+  formatNumber(n) {
+    return new Intl.NumberFormat(locale).format(Number(n || 0));
+  },
 };
 
 export function applyI18n() {
-  document.querySelectorAll("[data-i18n]").forEach(el => {
-    const key = el.getAttribute("data-i18n");
+  document.querySelectorAll("[data-i18n]").forEach((node) => {
+    const key = node.getAttribute("data-i18n");
     if (!key) return;
-    el.textContent = t(key);
+    node.textContent = t(key);
   });
 }
 
 export function actionLabel(tipo) {
   if (!tipo) return "";
   const k = String(tipo);
-  const map = dict[locale]?.action || {};
+  const map = dict[locale]?.action || dict.en?.action || {};
   return map[k] || k;
 }

@@ -8,14 +8,44 @@ import {
   me,
   getPendingTarget,
   getFlip3Ctx,
-  isEligible
+  isEligible,
 } from "./state.js";
 import { pointsFromCards, cardLabel } from "./deck.js";
 import { escapeHtml } from "./util.js";
+import { fxIsBusy } from "./fx.js";
+import { virtualize } from '@lit-labs/virtualizer/virtualize.js';
+
+function stateKey(stato) {
+  return String(stato || "IN GIOCO")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "_")
+    .replace(/[^A-Z0-9_]/g, "");
+}
+
+// ✅ Stato round tradotto (UI)
+function roundStateLabel(stato) {
+  const k = stateKey(stato);
+
+  // Mappa stati interni -> chiavi i18n
+  switch (k) {
+    case "IN_GIOCO":
+      return t("hud.state.inPlay");
+    case "STAY":
+      return t("hud.state.stay");
+    case "SBALLATO":
+      return t("hud.state.bust");
+    case "FLIP7WIN":
+      return t("hud.state.flip7win");
+    default:
+      // fallback: non rompi la UI se arriva uno stato nuovo
+      return String(stato || "");
+  }
+}
 
 export function computeInPlayCount() {
   let n = 0;
-  getPlayers().forEach(p => {
+  getPlayers().forEach((p) => {
     n += (p.getState("mioTavolo") || []).length;
     n += (p.getState("pendingActions") || []).length;
   });
@@ -28,12 +58,18 @@ export function pendingText() {
 
   const pt = getPendingTarget();
   if (!pt) return null;
-  const by = getPlayers().find(p => p.id === pt.by) || null;
+
+  const by = getPlayers().find((p) => p.id === pt.by) || null;
   const left = Math.max(0, Math.ceil(((pt.until || 0) - Date.now()) / 1000));
-  return t("hud.pendingChoice", { player: by ? (by.getProfile().name || "PLAYER").split(" ")[0].toUpperCase() : "???", tipo: actionLabel(pt.tipo), s: left });
+  return t("hud.pendingChoice", {
+    player: by ? (by.getProfile().name || "PLAYER").split(" ")[0].toUpperCase() : "???",
+    tipo: actionLabel(pt.tipo),
+    s: left,
+  });
 }
 
-export function renderGlobalRank() {
+// ✅ Virtualizzato con Lit Virtualizer
+export async function renderGlobalRank() {
   const root = el("global-rank");
   if (!root) return;
 
@@ -43,50 +79,79 @@ export function renderGlobalRank() {
   const cur = currentTurnPlayer();
   root.innerHTML = "";
 
-  ps.forEach(p => {
-    const score = p.getState("puntiTotali") || 0;
-    const stato = p.getState("statoRound") || "IN GIOCO";
-    const tavolo = p.getState("mioTavolo") || [];
+  const virt = virtualize({
+    items: ps,
+    renderItem: (p, idx) => {
+      const score = p.getState("puntiTotali") || 0;
 
-    const dotClass =
-      stato === "IN GIOCO" ? "dot-green" :
-      (stato === "STAY" || stato === "FLIP7WIN") ? "dot-blue" : "dot-red";
+      const statoRaw = p.getState("statoRound") || "IN GIOCO";
+      const sKey = stateKey(statoRaw);
+      const statoLabel = roundStateLabel(statoRaw);
 
-    const item = document.createElement("div");
-    item.className = `rank-item ${(cur && cur.id === p.id) ? "rank-active" : ""}`;
-    item.innerHTML = `
-      <div class="rank-top">
-        <div class="rank-name">${escapeHtml((p.getProfile().name || "PLAYER").toUpperCase())}</div>
-        <div class="rank-score">${escapeHtml(nf.formatNumber(score))}</div>
-      </div>
-      <div class="badge">
-        <span class="dot ${dotClass}"></span>
-        <span>${escapeHtml(stato)}</span>
-        <span style="margin-left:auto">${p.getState("matchRoundDone") ? "✓" : ""}</span>
-      </div>
-    `;
+      const tavolo = p.getState("mioTavolo") || [];
+      const pending = p.getState("pendingActions") || [];
+      const shown = [...tavolo, ...pending];
 
-    const minis = document.createElement("div");
-    minis.className = "mini-cards";
+      const dotClass =
+        sKey === "IN_GIOCO"
+          ? "dot-green"
+          : sKey === "STAY" || sKey === "FLIP7WIN"
+            ? "dot-blue"
+            : "dot-red";
 
-    const now = Date.now();
-    const dupValue = p.getState("dupValue");
-    const dupActive = now < (p.getState("dupFxUntil") || 0);
+      const item = document.createElement("div");
+      item.className = `rank-item ${(cur && cur.id === p.id) ? "rank-active" : ""}`;
 
-    tavolo.slice(-10).forEach(c => {
-      const isDup = dupActive && c.type === "number" && dupValue != null && c.value === dupValue;
-      const m = document.createElement("div");
-      m.className = `mini ${c.type !== "number" ? "special" : ""} ${isDup ? "dup-hit flash-strong" : ""}`;
-      m.innerText = cardLabel(c);
-      minis.appendChild(m);
-    });
+      // dataset indicizzabile (CSS/debug)
+      item.dataset.index = String(idx + 1);
+      item.dataset.pid = String(p.id || "");
+      item.dataset.state = sKey;
 
-    item.appendChild(minis);
-    root.appendChild(item);
+      item.innerHTML = `
+        <div class="rank-top">
+          <div class="rank-left">
+            <div class="rank-pos">${escapeHtml(nf.formatNumber(idx + 1))}</div>
+            <div class="rank-name">${escapeHtml((p.getProfile().name || "PLAYER").toUpperCase())}</div>
+          </div>
+          <div class="rank-score">${escapeHtml(nf.formatNumber(score))}</div>
+        </div>
+        <div class="badge" data-state="${escapeHtml(sKey)}">
+          <span class="dot ${dotClass}"></span>
+          <span>${escapeHtml(statoLabel)}</span>
+          <span style="margin-left:auto">${p.getState("matchRoundDone") ? "✓" : ""}</span>
+        </div>
+      `;
+
+      const minis = document.createElement("div");
+      minis.className = "mini-cards";
+
+      const now = Date.now();
+      const dupValue = p.getState("dupValue");
+      const dupActive = now < (p.getState("dupFxUntil") || 0);
+
+      shown.slice(-10).forEach((c) => {
+        const isDup =
+          dupActive &&
+          c?.type === "number" &&
+          dupValue != null &&
+          c.value === dupValue;
+
+        const m = document.createElement("div");
+        m.className = `mini ${c?.type !== "number" ? "special" : ""} ${isDup ? "dup-hit flash-strong" : ""}`.trim();
+        m.innerText = cardLabel(c);
+        minis.appendChild(m);
+      });
+
+      item.appendChild(minis);
+      return item;
+    }
   });
+
+  virt.container = root;
 }
 
-export function renderMyTable() {
+// ✅ Virtualizzato con Lit Virtualizer
+export async function renderMyTable() {
   const mp = me();
   ensureDefaults(mp);
 
@@ -98,25 +163,54 @@ export function renderMyTable() {
   const dupActive = now < (mp.getState("dupFxUntil") || 0);
 
   const cards = mp.getState("mioTavolo") || [];
+  const pending = mp.getState("pendingActions") || [];
+
   const prevCount = Number(display.getAttribute("data-prev-count") || "0");
   display.setAttribute("data-prev-count", String(cards.length));
-
   display.innerHTML = "";
 
-  cards.forEach((c, idx) => {
-    const isDup = dupActive && c.type === "number" && dupValue != null && c.value === dupValue;
-    const d = document.createElement("div");
-    const isSpecial = c.type !== "number";
-    d.className = `card ${isSpecial ? "special" : ""} ${isDup ? "dup-hit" : ""} ${(idx >= prevCount) ? "deal" : ""}`;
-    d.innerText = cardLabel(c);
-    display.appendChild(d);
-
-    if (isDup) {
-      d.classList.add("shake");
-      setTimeout(() => d.classList.remove("shake"), 900);
+  // Virtualizer per le carte principali
+  const virt = virtualize({
+    items: cards,
+    renderItem: (c, idx) => {
+      const isDup = dupActive && c.type === "number" && dupValue != null && c.value === dupValue;
+      const isSpecial = c.type !== "number";
+      const d = document.createElement("div");
+      d.className = `card ${isSpecial ? "special" : ""} ${isDup ? "dup-hit" : ""} ${(idx >= prevCount) ? "deal" : ""}`.trim();
+      d.innerText = cardLabel(c);
+      d.dataset.value = c.value; // Per shake effect
+      return d;
     }
   });
 
+  virt.container = display;
+
+  // ✅ Shake effect per duplicati (post-render)
+  const lastShakeKey = display.getAttribute("data-last-shake") || "";
+  const shakeKey = dupActive && dupValue != null ? `${dupValue}:${mp.getState("dupFxUntil") || 0}` : "";
+
+  if (shakeKey && shakeKey !== lastShakeKey) {
+    setTimeout(() => {
+      const dupCards = display.querySelectorAll(`.dup-hit`);
+      dupCards.forEach(card => {
+        card.classList.add("shake");
+        setTimeout(() => card.classList.remove("shake"), 900);
+      });
+    }, 100);
+    display.setAttribute("data-last-shake", shakeKey);
+  } else if (!shakeKey && lastShakeKey) {
+    display.setAttribute("data-last-shake", "");
+  }
+
+  // Pending actions (non virtualizzati - sempre visibili)
+  pending.forEach((c) => {
+    const d = document.createElement("div");
+    d.className = "card special pending-action";
+    d.innerText = cardLabel(c);
+    display.appendChild(d);
+  });
+
+  // Shield second chance (non virtualizzato)
   if (mp.getState("hasSecondChance")) {
     const shield = document.createElement("div");
     shield.className = "card shield";
@@ -125,7 +219,7 @@ export function renderMyTable() {
   }
 }
 
-export function renderHud(hostLocks) {
+export function renderHud(hostLocks = { actionLocked: false, transitionLocked: false }) {
   const mp = me();
   ensureDefaults(mp);
 
@@ -151,7 +245,7 @@ export function renderHud(hostLocks) {
     deckInfo.innerText = t("hud.deck", {
       draw: nf.formatNumber(drawPile.length),
       discard: nf.formatNumber(discardPile.length),
-      inPlay: nf.formatNumber(computeInPlayCount())
+      inPlay: nf.formatNumber(computeInPlayCount()),
     });
   }
 
@@ -166,7 +260,7 @@ export function renderHud(hostLocks) {
   }
 
   const flip3 = getFlip3Ctx();
-  const lock = !!getPendingTarget() || hostLocks.actionLocked || hostLocks.transitionLocked || !!flip3;
+  const lock = !!getPendingTarget() || !!hostLocks.actionLocked || !!hostLocks.transitionLocked || !!flip3;
 
   const tip = el("turn-tip");
   if (tip) {
@@ -179,9 +273,11 @@ export function renderHud(hostLocks) {
   if (status) {
     if (Playroom.getState("partitaFinita")) status.innerText = t("hud.statusGameOver");
     else if (flip3) {
-      const tp = getPlayers().find(p => p.id === flip3.targetId) || null;
+      const tp = getPlayers().find((p) => p.id === flip3.targetId) || null;
       const pname = tp ? (tp.getProfile().name || "PLAYER").split(" ")[0] : "??";
-      status.innerText = flip3.paused ? t("hud.statusFlip3Pause", { player: pname }) : t("hud.statusFlip3Run", { player: pname, n: flip3.remaining || 0 });
+      status.innerText = flip3.paused
+        ? t("hud.statusFlip3Pause", { player: pname })
+        : t("hud.statusFlip3Run", { player: pname, n: flip3.remaining || 0 });
     } else if (lockLine) status.innerText = t("hud.statusWaitChoice");
     else if (myTurn) status.innerText = t("hud.statusYourTurn");
     else status.innerText = t("hud.statusTurnOf", { player: cur ? (cur.getProfile().name || "PLAYER").split(" ")[0] : "??" });
@@ -190,25 +286,34 @@ export function renderHud(hostLocks) {
   const btnDraw = el("btn-pesca");
   const btnStop = el("btn-stop");
   const roundEnded = !!Playroom.getState("roundEndedByFlip7");
+  const fxBusy = fxIsBusy();
 
-  if (btnDraw) btnDraw.disabled =
+  const drawDisabled =
     !!Playroom.getState("partitaFinita") ||
     roundEnded ||
     !!getPendingTarget() ||
-    hostLocks.actionLocked ||
-    hostLocks.transitionLocked ||
-    !!flip3 ||
-    !myTurn ||
-    !!mp.getState("flip3Lock");
-
-  if (btnStop) btnStop.disabled =
-    !!Playroom.getState("partitaFinita") ||
-    roundEnded ||
-    !!getPendingTarget() ||
-    hostLocks.actionLocked ||
-    hostLocks.transitionLocked ||
+    !!hostLocks.actionLocked ||
+    !!hostLocks.transitionLocked ||
     !!flip3 ||
     !myTurn ||
     !!mp.getState("flip3Lock") ||
-    (mp.getState("mioTavolo") || []).length === 0;
+    fxBusy;
+
+  const stopDisabled =
+    !!Playroom.getState("partitaFinita") ||
+    roundEnded ||
+    !!getPendingTarget() ||
+    !!hostLocks.actionLocked ||
+    !!hostLocks.transitionLocked ||
+    !!flip3 ||
+    !myTurn ||
+    !!mp.getState("flip3Lock") ||
+    (mp.getState("mioTavolo") || []).length === 0 ||
+    fxBusy;
+
+  if (btnDraw) btnDraw.disabled = drawDisabled;
+  if (btnStop) btnStop.disabled = stopDisabled;
 }
+
+// ✅ Esporta funzioni async per chiamate dall'esterno
+export { renderGlobalRank, renderMyTable };

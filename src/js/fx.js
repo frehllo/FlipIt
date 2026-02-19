@@ -2,7 +2,7 @@ import * as Playroom from "playroomkit";
 import { el } from "./dom.js";
 import { CFG } from "./cfg.js";
 import { rand } from "./util.js";
-import { t, actionLabel } from "./i18n.js";
+import { t } from "./i18n.js";
 import { me } from "./state.js";
 
 // singleton locale (serve per fxIsBusy)
@@ -21,7 +21,12 @@ export function installFxRpc() {
   Playroom.RPC.register("rpcFx", (d) => {
     const tid = d?.tid;
     if (!tid) return;
-    if (me().id !== tid) return;
+
+    const mine = me();
+    if (!mine?.id) return;
+    if (mine.id !== tid) return;
+
+    // Nota: TARGET non esiste e non verrà mai renderizzato
     _fx.run(d.kind, d.text);
   });
 }
@@ -29,7 +34,6 @@ export function installFxRpc() {
 function createFxLocal() {
   const layer = el("fx-layer");
 
-  // ---- FX QUEUE (serial: overlay + text + particles) ----
   let q = [];
   let running = false;
   let busyUntil = 0;
@@ -125,11 +129,13 @@ function createFxLocal() {
       addOverlay("bank-overlay");
       addText(`${t("fx.bank")} ${text || ""}`.trim());
       addParticles("coinpop", "🪙", CFG.FX.PARTICLES?.BANK ?? 32);
+    } else {
+      // kind sconosciuto -> ignora
+      return;
     }
   };
 
   const run = (kind, text) => {
-    // lock immediato: blocca input anche se sei tra due job
     busyUntil = Math.max(busyUntil, Date.now() + STEP_MS);
 
     enqueue(async () => {

@@ -2,12 +2,10 @@ import * as Playroom from "playroomkit";
 
 const playersMap = new Map(); // id -> PlayerState
 
-export function initPlayersRegistry(){
-  // registra me subito se disponibile
+export function initPlayersRegistry() {
   const mine = Playroom.myPlayer();
   if (mine && mine.id) playersMap.set(mine.id, mine);
 
-  // registra chi entra
   Playroom.onPlayerJoin((playerState) => {
     if (!playerState?.id) return;
     playersMap.set(playerState.id, playerState);
@@ -30,7 +28,7 @@ export const getPlayers = () => {
 export const nameOf = (p) =>
   p ? (p.getProfile().name || "PLAYER").split(" ")[0].toUpperCase() : "???";
 
-export function ensureDefaults(p){
+export function ensureDefaults(p) {
   if (!p || typeof p.getState !== "function") return;
 
   if (p.getState("puntiTotali") == null) p.setState("puntiTotali", 0);
@@ -54,14 +52,15 @@ export const isEligible = (p) => !!p && isInGioco(p) && !isDone(p);
 export const getPendingTarget = () => Playroom.getState("pendingTarget");
 export const getFlip3Ctx = () => Playroom.getState("flip3Ctx");
 
-export function eligibleTurnIds(){
+export function eligibleTurnIds() {
   const ps = getPlayers();
   ps.forEach(ensureDefaults);
-  return ps.filter(p => isEligible(p)).map(p => p.id);
+  return ps.filter((p) => isEligible(p)).map((p) => p.id);
 }
 
-export function currentTurnPlayer(){
+// ✅ Ripristinato per compatibilità con input.js / render.js
+export function currentTurnPlayer() {
   const pid = Playroom.getState("turnPid");
   if (!pid) return null;
-  return getPlayers().find(x => x.id === pid) || null;
+  return getPlayers().find((x) => x.id === pid) || null;
 }

@@ -2,7 +2,7 @@ import * as Playroom from "playroomkit";
 import { setLocale, getLocale, applyI18n } from "./i18n.js";
 import { installFxRpc } from "./fx.js";
 import { installToastRpc } from "./toast.js";
-import { installLogRpcs } from "./log.js";
+import { LOG } from "./log.js";
 import { initChatUI } from "./chat.js";
 import { initInfoModal, installTargetModalRpcs } from "./modals.js";
 import { installEndgameRpcs } from "./endgame.js";
@@ -15,11 +15,9 @@ import {
 import { initInputs } from "./input.js";
 import { startLoop } from "./loop.js";
 import { el } from "./dom.js";
-import { renderHud, renderGlobalRank, renderMyTable } from "./render.js";
-// se hai aggiunto il registry players che ti ho dato prima:
-// import { initPlayersRegistry } from "./state.js";
+import { renderHud, renderGlobalRank, renderMyTable } from "./render.js"; // ✅ Già corretto
 
-if (import.meta.hot) import.meta.hot.decline(); // evita duplicazione listeners in dev [web:399]
+if (import.meta.hot) import.meta.hot.decline();
 
 if (!window.flip7mainstarted) {
   window.flip7mainstarted = true;
@@ -32,47 +30,43 @@ async function boot() {
     skipLobby: false,
   });
 
-  // se usi il registry players:
-  // initPlayersRegistry();
-
   // i18n init
   setLocale(getLocale());
   applyI18n();
 
   // language toggle + label (shows the *next* language)
-  const updateLangButton = () => {
+  const updateLangButton = async () => { // ✅ ASYNC
     const btn = el("btn-lang");
     if (!btn) return;
-    const cur = getLocale(); // current locale stored
+    const cur = getLocale();
     btn.textContent = cur === "it" ? "EN" : "IT";
     btn.setAttribute("title", cur === "it" ? "Switch to English" : "Passa a Italiano");
   };
 
-  updateLangButton();
+  await updateLangButton(); // ✅ AWAIT
 
   const btnLang = el("btn-lang");
   if (btnLang) {
-    btnLang.onclick = () => {
+    btnLang.onclick = async () => { // ✅ ASYNC
       const cur = getLocale();
       setLocale(cur === "it" ? "en" : "it");
 
       applyI18n();
-      updateLangButton();
+      await updateLangButton(); // ✅ AWAIT
 
-      // redraw dynamic strings immediately
-      renderHud({
+      // ✅ RENDER ASYNC - Ordine importante!
+      await renderGlobalRank();     // 1° Sidebar
+      await renderMyTable();        // 2° My table  
+      renderHud({                   // 3° Sync (testi)
         actionLocked: hostActionLocked(),
         transitionLocked: hostRoundTransitionLocked(),
       });
-      renderGlobalRank();
-      renderMyTable();
     };
   }
 
   // RPCs / UI
   installFxRpc();
   installToastRpc();
-  installLogRpcs();
 
   initChatUI();
   initInfoModal();

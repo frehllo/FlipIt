@@ -1,4 +1,4 @@
-export const PLUS2 = 2000;
+export const PLUS1 = 1000;
 
 export const CFG = Object.freeze({
   MATCHTARGET: 200,
@@ -8,27 +8,26 @@ export const CFG = Object.freeze({
   MAXCHAT: 50,
   TARGETTIMEOUTMS: 18000,
   SERVERACTIONCOOLDOWNMS: 220,
-  BUSTHOLDMS: 1600 + PLUS2,
+  BUSTHOLDMS: 1600 + PLUS1,
   ROUNDTRANSITIONPADMS: 120,
   FLIP3STEPMS: 360,
   FLIP3WATCHDOGMS: 12000,
   HOSTTICKMS: 250,
-  TOASTMSDEFAULT: 1400 + PLUS2,
+  TOASTMSDEFAULT: 1400 + PLUS1,
   FX: Object.freeze({
-    TEXTMS: 950 + PLUS2,
-    OVERLAYMS: 880 + PLUS2,
-    FALLMINMS: 750 + PLUS2,
-    FALLMAXMS: 1400 + PLUS2,
+    TEXTMS: 950 + PLUS1,
+    OVERLAYMS: 880 + PLUS1,
+    FALLMINMS: 750 + PLUS1,
+    FALLMAXMS: 1400 + PLUS1,
     SIZEMINPX: 14,
     SIZEMAXPX: 26,
     PARTICLES: Object.freeze({
-      BUST: 34,
-      FREEZE: 28,
-      FLIP3: 28,
-      SECOND: 26,
-      FLIP7: 40,
-      BANK: 32,
-      TARGET: 16,
+      BUST: 20,
+      FREEZE: 20,
+      FLIP3: 20,
+      SECOND: 20,
+      FLIP7: 50,
+      BANK: 25
     })
   })
 });

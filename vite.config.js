@@ -3,9 +3,14 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   base: "/pixel7/",
-  plugins: [react()],
+  plugins: [
+    react(),
+    // 🔄 Lit plugin (opzionale, tree-shaking auto)
+  ],
   server: {
-    // Questo aiuta a risolvere i problemi di cache che abbiamo visto prima
     force: true 
+  },
+  optimizeDeps: {
+    include: ['lit', '@lit-labs/virtualizer']
   }
 });
