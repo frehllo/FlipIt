@@ -65,30 +65,88 @@ export function pendingText() {
   });
 }
 
-// ✅ FIX: renderGlobalRank - Virtualizer corretto + fallback non-virtualizzato
 export async function renderGlobalRank() {
   const root = el("global-rank");
   if (!root) return;
 
   const ps = getPlayers();
   ps.forEach(ensureDefaults);
-
   const cur = currentTurnPlayer();
-  root.innerHTML = ""; // ✅ Pulizia completa
-
-  // ✅ Fallback se virtualizer non funziona o pochi elementi
-  if (ps.length <= 10) {
-    ps.forEach((p, idx) => renderPlayerRankItem(root, p, idx, cur));
-    return;
-  }
-
-  // Virtualizer principale
-  const virt = virtualize({
-    items: ps,
-    renderItem: (p, idx) => renderPlayerRankItem(document.createDocumentFragment(), p, idx, cur).firstChild
-  });
   
-  virt.container = root;
+  root.innerHTML = ""; 
+
+  // Soglia mobile (puoi regolarla in base al tuo CSS)
+  const isMobile = window.innerWidth <= 820;
+
+  if (!isMobile) {
+    // --- LOGICA DESKTOP: Renderizziamo tutti in fila ---
+    ps.forEach((p, idx) => {
+      renderPlayerRankItem(root, p, idx, cur);
+    });
+  } else {
+    // --- LOGICA MOBILE: Solo il giocatore di turno (o io) + Tasto 📊 ---
+    const mine = me();
+    // Priorità: Giocatore di turno > Io > Primo della lista
+    const focusPlayer = cur || mine || ps[0];
+    
+    if (focusPlayer) {
+      const idx = ps.findIndex(p => p.id === focusPlayer.id);
+      renderPlayerRankItem(root, focusPlayer, idx, cur);
+    }
+
+    // Aggiungiamo il tasto per aprire la classifica completa
+    const btnOpen = document.createElement("button");
+    btnOpen.className = "px-btn px-btn-secondary btn-open-rank";
+    btnOpen.style.marginLeft = "8px";
+    btnOpen.innerHTML = "📊";
+    btnOpen.onclick = () => {
+      const modal = el("rank-modal");
+      const list = el("modal-rank-list");
+      if (modal && list) {
+        list.innerHTML = ""; // Pulisce la modale
+        ps.forEach((p, idx) => renderPlayerRankItem(list, p, idx, cur));
+        modal.style.display = "grid";
+      }
+    };
+    root.appendChild(btnOpen);
+  }
+}
+
+// Aggiungi questa funzione in render.js
+export function renderMobileRankModal() {
+  const modal = el("rank-modal"); // Usiamo info-modal o quella che hai destinato al rank
+  if (!modal || modal.style.display === "none") return;
+
+  const container = el("modal-rank-list");
+  if (!container) return;
+
+  const ps = getPlayers();
+  // Riutilizziamo la logica di generazione HTML degli item
+  container.innerHTML = ps.map(p => {
+    const profile = p.getProfile();
+    const isMe = p.id === me()?.id;
+    const isTurn = p.id === currentTurnPlayer()?.id;
+    const cards = p.getState("mioTavolo") || [];
+    const pts = pointsFromCards(cards);
+    const total = p.getState("puntiTotali") || 0;
+    const stato = p.getState("statoRound") || "IN GIOCO";
+
+    return `
+      <div class="rank-item ${isTurn ? 'rank-active' : ''}" style="${isMe ? 'border: 1px solid var(--neonCyan)' : ''}">
+        <div class="rank-top">
+          <span class="rank-name">${escapeHtml(profile.name || "PLAYER")} ${isMe ? '(TU)' : ''}</span>
+          <span class="rank-score">${total} <small>(+${pts})</small></span>
+        </div>
+        <div class="badge">
+          <div class="dot ${isTurn ? 'dot-green' : 'dot-blue'}"></div>
+          <span>${roundStateLabel(stato)}</span>
+        </div>
+        <div class="mini-cards">
+          ${cards.map(c => `<div class="mini">${cardLabel(c)}</div>`).join('')}
+        </div>
+      </div>
+    `;
+  }).join("");
 }
 
 // ✅ Helper per render singolo item rank (usato sia virtual che fallback)
@@ -97,19 +155,25 @@ function renderPlayerRankItem(container, p, idx, cur) {
   const statoRaw = p.getState("statoRound") || "IN GIOCO";
   const sKey = stateKey(statoRaw);
   const statoLabel = roundStateLabel(statoRaw);
-
+  
+  // Logiche esistenti per carte e tavoli
   const tavolo = p.getState("mioTavolo") || [];
   const pending = p.getState("pendingActions") || [];
   const shown = [...tavolo, ...pending];
 
+  // Calcolo punti round per il (+X)
+  const roundPts = typeof pointsFromCards === 'function' ? pointsFromCards(tavolo) : 0;
+  const isMe = p.id === me()?.id;
+
+  // Logica 2nd Chance virtuale
   if (p.getState("hasSecondChance")) {
-    
     const giaInPending = pending.some(c => c.value === "2ndCHANCE");
     if (!giaInPending) {
       shown.push({ type: "special", value: "2ndCHANCE" });
     }
   }
 
+  // Logica colori dot
   const dotClass =
     sKey === "IN_GIOCO"
       ? "dot-green"
@@ -118,28 +182,40 @@ function renderPlayerRankItem(container, p, idx, cur) {
         : "dot-red";
 
   const item = document.createElement("div");
+  // Aggiungiamo 'rank-active' se è il turno e uno stile speciale se sono IO
   item.className = `rank-item ${(cur && cur.id === p.id) ? "rank-active" : ""}`;
+  if (isMe) {
+    item.style.outline = "1px solid var(--neonCyan)";
+    item.style.background = "rgba(0, 224, 255, 0.05)";
+  }
+  
   item.dataset.index = String(idx + 1);
   item.dataset.pid = String(p.id || "");
   item.dataset.state = sKey;
 
+  // Layout aggiornato con (+Punti) e (TU)
   item.innerHTML = `
     <div class="rank-top">
       <div class="rank-left">
         <div class="rank-pos">${escapeHtml(nf.formatNumber(idx + 1))}</div>
-        <div class="rank-name">${escapeHtml((p.getProfile().name || "PLAYER").toUpperCase())}</div>
+        <div class="rank-name">
+          ${escapeHtml((p.getProfile().name || "PLAYER").toUpperCase())}
+          ${isMe ? `<span style="color:var(--neonCyan); font-size:0.7em; margin-left:4px;">(TU)</span>` : ''}
+        </div>
       </div>
-      <div class="rank-score">${escapeHtml(nf.formatNumber(score))}</div>
+      <div class="rank-score">
+        ${escapeHtml(nf.formatNumber(score))}
+        <span style="opacity:0.7; font-size: 0.65em; margin-left:2px;">(+${roundPts})</span>
       </div>
-      <div class="badge" data-state="${escapeHtml(sKey)}">
-        <span class="dot ${dotClass}"></span>
-        <span>${escapeHtml(statoLabel)}</span>
-        <span style="margin-left:auto">${p.getState("matchRoundDone") ? "✓" : ""}</span>
-      </div>
+    </div>
+    <div class="badge" data-state="${escapeHtml(sKey)}">
+      <span class="dot ${dotClass}"></span>
+      <span>${escapeHtml(statoLabel)}</span>
+      <span style="margin-left:auto">${p.getState("matchRoundDone") ? "✓" : ""}</span>
     </div>
   `;
 
-  // ✅ Mini carte con fallback se vuote
+  // Mini carte con logica duplicati e animazioni
   const minis = document.createElement("div");
   minis.className = "mini-cards";
 
@@ -384,3 +460,9 @@ export function renderHud(hostLocks = { actionLocked: false, transitionLocked: f
   if (btnDraw) btnDraw.disabled = drawDisabled;
   if (btnStop) btnStop.disabled = stopDisabled;
 }
+
+document.addEventListener('click', (e) => {
+  if (e.target.id === "rank-modal-close") {
+    el("rank-modal").style.display = "none";
+  }
+});
