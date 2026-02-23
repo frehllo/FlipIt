@@ -112,27 +112,38 @@ export async function renderGlobalRank() {
   }
 }
 
-let lastModalState = "";
+let lastRankState = "";
 
 export function renderMobileRankModal() {
   const modal = el("rank-modal");
   if (!modal || modal.style.display === "none") return;
 
   const ps = getPlayers();
-  // Creiamo una "firma" dello stato attuale (punti + carte totali)
-  const currentState = ps.map(p => 
-    (p.getState("puntiTotali") || 0) + (p.getState("mioTavolo")?.length || 0)
-  ).join("-");
+  if (!ps) return;
 
-  // Se nulla è cambiato dall'ultimo frame, non fare nulla
-  if (currentState === lastModalState) return;
-  lastModalState = currentState;
+  // 1. Creiamo una stringa che rappresenta lo stato attuale
+  // Se i punti o il numero di carte non cambiano, non ridisegniamo nulla
+  const currentState = ps.map(p => 
+    `${p.id}-${p.getState("puntiTotali") || 0}-${(p.getState("mioTavolo") || []).length}-${p.getState("statoRound")}`
+  ).join("|");
+
+  if (currentState === lastRankState) return; // ESCI SE NON CI SONO NOVITÀ
+  lastRankState = currentState;
 
   const container = el("modal-rank-list");
   if (!container) return;
 
-  container.innerHTML = "";
-  ps.forEach((p, idx) => renderPlayerRankItem(container, p, idx, currentTurnPlayer()));
+  // 2. Usiamo un frammento di documento (più veloce per il mobile)
+  const tempDiv = document.createElement("div");
+  const cur = currentTurnPlayer();
+  
+  ps.forEach((p, idx) => {
+    // Usiamo la TUA funzione unificata
+    renderPlayerRankItem(tempDiv, p, idx, cur);
+  });
+
+  // 3. Aggiorniamo il DOM in un colpo solo
+  container.innerHTML = tempDiv.innerHTML;
 }
 
 // ✅ Helper per render singolo item rank (usato sia virtual che fallback)

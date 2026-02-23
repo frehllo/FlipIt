@@ -36,7 +36,11 @@ export function startLoop() {
 
     renderHud({ actionLocked: hostActionLocked(), transitionLocked: hostRoundTransitionLocked() });
     renderGlobalRank();
-    renderMobileRankModal();
+    try {
+      renderMobileRankModal();
+    } catch (err) {
+      alert("ERRORE RANK: " + err.message);
+    }
     renderMyTable();
 
     requestAnimationFrame(loop);
