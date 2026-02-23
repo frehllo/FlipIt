@@ -112,38 +112,40 @@ export async function renderGlobalRank() {
   }
 }
 
-let lastRankState = "";
+let lastRankUpdate = 0;
+let lastRankContent = "";
 
 export function renderMobileRankModal() {
   const modal = el("rank-modal");
   if (!modal || modal.style.display === "none") return;
 
+  // 1. Limita la frequenza: su mobile 60fps per una classifica è troppo
+  const now = Date.now();
+  if (now - lastRankUpdate < 200) return; // Massimo 5 aggiornamenti al secondo
+  lastRankUpdate = now;
+
   const ps = getPlayers();
   if (!ps) return;
 
-  // 1. Creiamo una stringa che rappresenta lo stato attuale
-  // Se i punti o il numero di carte non cambiano, non ridisegniamo nulla
-  const currentState = ps.map(p => 
-    `${p.id}-${p.getState("puntiTotali") || 0}-${(p.getState("mioTavolo") || []).length}-${p.getState("statoRound")}`
-  ).join("|");
-
-  if (currentState === lastRankState) return; // ESCI SE NON CI SONO NOVITÀ
-  lastRankState = currentState;
+  // 2. Verifica se i dati sono cambiati prima di fare qualsiasi operazione pesante
+  const currentHash = ps.map(p => p.getState("puntiTotali") + (p.getState("mioTavolo")?.length || 0)).join("|");
+  if (currentHash === lastRankContent) return;
+  lastRankContent = currentHash;
 
   const container = el("modal-rank-list");
   if (!container) return;
 
-  // 2. Usiamo un frammento di documento (più veloce per il mobile)
+  // 3. Se usi virtualize, NON svuotare l'innerHTML manualmente.
+  // Se invece la gestiamo noi, costruisci l'HTML "offline"
   const tempDiv = document.createElement("div");
-  const cur = currentTurnPlayer();
-  
   ps.forEach((p, idx) => {
-    // Usiamo la TUA funzione unificata
-    renderPlayerRankItem(tempDiv, p, idx, cur);
+    renderPlayerRankItem(tempDiv, p, idx, currentTurnPlayer());
   });
 
-  // 3. Aggiorniamo il DOM in un colpo solo
-  container.innerHTML = tempDiv.innerHTML;
+  // Aggiornamento secco (meno stress per WebKit)
+  if (container.innerHTML !== tempDiv.innerHTML) {
+    container.innerHTML = tempDiv.innerHTML;
+  }
 }
 
 // ✅ Helper per render singolo item rank (usato sia virtual che fallback)
