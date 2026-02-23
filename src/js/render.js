@@ -112,41 +112,27 @@ export async function renderGlobalRank() {
   }
 }
 
-// Aggiungi questa funzione in render.js
+let lastModalState = "";
+
 export function renderMobileRankModal() {
-  const modal = el("rank-modal"); // Usiamo info-modal o quella che hai destinato al rank
+  const modal = el("rank-modal");
   if (!modal || modal.style.display === "none") return;
+
+  const ps = getPlayers();
+  // Creiamo una "firma" dello stato attuale (punti + carte totali)
+  const currentState = ps.map(p => 
+    (p.getState("puntiTotali") || 0) + (p.getState("mioTavolo")?.length || 0)
+  ).join("-");
+
+  // Se nulla è cambiato dall'ultimo frame, non fare nulla
+  if (currentState === lastModalState) return;
+  lastModalState = currentState;
 
   const container = el("modal-rank-list");
   if (!container) return;
 
-  const ps = getPlayers();
-  // Riutilizziamo la logica di generazione HTML degli item
-  container.innerHTML = ps.map(p => {
-    const profile = p.getProfile();
-    const isMe = p.id === me()?.id;
-    const isTurn = p.id === currentTurnPlayer()?.id;
-    const cards = p.getState("mioTavolo") || [];
-    const pts = pointsFromCards(cards);
-    const total = p.getState("puntiTotali") || 0;
-    const stato = p.getState("statoRound") || "IN GIOCO";
-
-    return `
-      <div class="rank-item ${isTurn ? 'rank-active' : ''}" style="${isMe ? 'border: 1px solid var(--neonCyan)' : ''}">
-        <div class="rank-top">
-          <span class="rank-name">${escapeHtml(profile.name || "PLAYER")} ${isMe ? '(TU)' : ''}</span>
-          <span class="rank-score">${total} <small>(+${pts})</small></span>
-        </div>
-        <div class="badge">
-          <div class="dot ${isTurn ? 'dot-green' : 'dot-blue'}"></div>
-          <span>${roundStateLabel(stato)}</span>
-        </div>
-        <div class="mini-cards">
-          ${cards.map(c => `<div class="mini">${cardLabel(c)}</div>`).join('')}
-        </div>
-      </div>
-    `;
-  }).join("");
+  container.innerHTML = "";
+  ps.forEach((p, idx) => renderPlayerRankItem(container, p, idx, currentTurnPlayer()));
 }
 
 // ✅ Helper per render singolo item rank (usato sia virtual che fallback)
