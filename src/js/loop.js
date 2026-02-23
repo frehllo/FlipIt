@@ -10,7 +10,7 @@ import {
   hostActionLocked,
   hostRoundTransitionLocked
 } from "./host.js";
-import { renderHud, renderGlobalRank, renderMyTable } from "./render.js";
+import { renderHud, renderGlobalRank, renderMyTable, renderMobileRankModal } from "./render.js";
 
 export function startLoop() {
   let lastHostTick = 0;
@@ -36,6 +36,7 @@ export function startLoop() {
 
     renderHud({ actionLocked: hostActionLocked(), transitionLocked: hostRoundTransitionLocked() });
     renderGlobalRank();
+    renderMobileRankModal();
     renderMyTable();
 
     requestAnimationFrame(loop);
